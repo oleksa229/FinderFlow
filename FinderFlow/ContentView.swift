@@ -1,5 +1,6 @@
 import SwiftUI
 import Quartz
+import WebKit
 import Darwin
 
 struct ContentView: View {
@@ -693,19 +694,90 @@ struct FilePreviewPanel: View {
 // QLPreviewView must be created after the view enters the window hierarchy —
 // creating it with a zero frame or before a window exists silently produces nothing.
 
-struct QLSidebarPreview: NSViewRepresentable {
+/// Quick Look preview. HTML files get a bar with a "Run scripts" button: scripts
+/// stay off until the user asks, and only for the file that is selected.
+struct QLSidebarPreview: View {
     let url: URL
-    func makeNSView(context: Context) -> _QLSidebarHost { _QLSidebarHost() }
-    func updateNSView(_ host: _QLSidebarHost, context: Context) { host.show(url) }
+    @State private var scriptsURL: URL?
+    @State private var scriptsUnavailable = false   // the network block could not be set up
+
+    private var isHTML: Bool { _QLSidebarHost.isHTML(url) }
+    private var running: Bool { scriptsURL == url }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if isHTML {
+                HStack(spacing: 8) {
+                    Text(scriptsUnavailable ? "Scripts unavailable" : (running ? "Scripts are running" : "Scripts are off"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button(running ? "Stop" : "Run scripts") {
+                        scriptsURL = running ? nil : url
+                    }
+                    .controlSize(.small)
+                    .disabled(scriptsUnavailable)
+                    .help("Runs the code inside this page. Only do this for files you trust.")
+                }
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(.bar)
+                Divider()
+            }
+            _QLSidebarRepresentable(url: url, runScripts: running) {
+                scriptsURL = nil
+                scriptsUnavailable = true
+            }
+        }
+        .onChange(of: url) { _, _ in scriptsURL = nil }   // never carry over to another file
+    }
 }
 
-final class _QLSidebarHost: NSView {
+private struct _QLSidebarRepresentable: NSViewRepresentable {
+    let url: URL
+    let runScripts: Bool
+    let onScriptsUnavailable: () -> Void
+    func makeNSView(context: Context) -> _QLSidebarHost { _QLSidebarHost() }
+    func updateNSView(_ host: _QLSidebarHost, context: Context) {
+        host.onScriptsUnavailable = onScriptsUnavailable
+        host.show(url, runScripts: runScripts)
+    }
+}
+
+final class _QLSidebarHost: NSView, WKNavigationDelegate {
     private var qlView: QLPreviewView?
     private var pendingURL: URL?
 
-    func show(_ url: URL) {
+    // HTML files: Quick Look never runs JavaScript, so script-built pages stay empty.
+    // Only when the user presses "Run scripts", the file is shown in a WKWebView with
+    // JavaScript. http/https/ws/ftp loads are blocked by a content rule list and nothing
+    // is stored on disk. Other channels (for example WebRTC) are NOT blocked, so the
+    // button is for files the user trusts. If the rule list cannot be compiled, Quick
+    // Look is used.
+    private var webView: WKWebView?
+    private var webURL: URL?
+    private var networkBlocked = false
+    private var webFailed = false   // rule list did not compile: use Quick Look for HTML
+
+    private var runScripts = false
+    var onScriptsUnavailable: (() -> Void)?
+
+    static func isHTML(_ url: URL) -> Bool {
+        ["html", "htm"].contains(url.pathExtension.lowercased())
+    }
+
+    private func usesWebView(_ url: URL) -> Bool {
+        runScripts && !webFailed && Self.isHTML(url)
+    }
+
+    func show(_ url: URL, runScripts: Bool) {
+        self.runScripts = runScripts
         pendingURL = url
+        if usesWebView(url) {
+            showHTML(url)
+            return
+        }
+        hideHTML()
         if let ql = qlView {
+            ql.isHidden = false
             ql.previewItem = url as NSURL
         } else {
             setupQL()
@@ -724,6 +796,7 @@ final class _QLSidebarHost: NSView {
 
     private func setupQL() {
         guard window != nil, qlView == nil else { return }
+        if let url = pendingURL, usesWebView(url) { return }   // WKWebView handles it
         // Use a concrete initial frame; zero frame produces a blank view.
         let frame = bounds.isEmpty ? NSRect(x: 0, y: 0, width: 260, height: 300) : bounds
         guard let ql = QLPreviewView(frame: frame, style: .normal) else { return }
@@ -734,6 +807,87 @@ final class _QLSidebarHost: NSView {
         qlView = ql
         if let url = pendingURL {
             ql.previewItem = url as NSURL
+        }
+    }
+
+    // MARK: HTML
+
+    private func showHTML(_ url: URL) {
+        qlView?.previewItem = nil
+        qlView?.isHidden = true
+        ensureWebView()
+        webView?.isHidden = false
+        guard url != webURL else { return }
+        webURL = url
+        loadHTML()
+    }
+
+    private func hideHTML() {
+        guard let wv = webView else { return }
+        wv.isHidden = true
+        if webURL != nil {
+            webURL = nil
+            wv.loadHTMLString("", baseURL: nil)   // stop scripts and timers of the old page
+        }
+    }
+
+    private func loadHTML() {
+        guard networkBlocked, let url = webURL else { return }
+        webView?.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+    }
+
+    private func ensureWebView() {
+        guard webView == nil else { return }
+        let cfg = WKWebViewConfiguration()
+        cfg.websiteDataStore = .nonPersistent()
+        cfg.defaultWebpagePreferences.allowsContentJavaScript = true
+        let wv = WKWebView(frame: bounds, configuration: cfg)
+        wv.autoresizingMask = [.width, .height]
+        wv.navigationDelegate = self
+        addSubview(wv)
+        webView = wv
+
+        // WebKit rule lists do not support "|" in url-filter, so one rule per scheme.
+        let rules = #"[{"trigger":{"url-filter":"^https?://"},"action":{"type":"block"}},{"trigger":{"url-filter":"^wss?://"},"action":{"type":"block"}},{"trigger":{"url-filter":"^ftp://"},"action":{"type":"block"}}]"#
+        WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: "ffBlockNetwork", encodedContentRuleList: rules
+        ) { [weak self] list, error in
+            DispatchQueue.main.async {
+                guard let self, let wv = self.webView else { return }
+                guard let list else {
+                    NSLog("FinderFlow: HTML script preview disabled, network block rules failed: \(String(describing: error))")
+                    // Fail closed: no JavaScript page. Show the normal Quick Look preview instead.
+                    self.webFailed = true
+                    self.onScriptsUnavailable?()
+                    self.hideHTML()
+                    if let url = self.pendingURL { self.show(url, runScripts: false) }
+                    return
+                }
+                wv.configuration.userContentController.add(list)
+                self.networkBlocked = true
+                self.loadHTML()
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
+        // Links do nothing. A script can click a link by itself (a.click()), so opening
+        // links in the browser would let a page send data out through the URL.
+        // File links are also blocked, so the page shown always matches the selected file.
+        // The main page may only be the selected file itself (a script can also navigate
+        // by location.href, a meta refresh or a form). Frames inside the page are allowed.
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        if navigationAction.navigationType == .linkActivated {
+            decisionHandler(.cancel)
+        } else if url.absoluteString == "about:blank" {
+            decisionHandler(.allow)
+        } else if url.isFileURL, !isMainFrame || url.standardizedFileURL == webURL?.standardizedFileURL {
+            decisionHandler(.allow)
+        } else {
+            decisionHandler(.cancel)
         }
     }
 }
