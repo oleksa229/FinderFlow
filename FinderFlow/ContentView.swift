@@ -17,6 +17,8 @@ struct ContentView: View {
     @State private var backStack:       [URL]     = []
     @State private var forwardStack:    [URL]     = []
     @State private var isHistoryJump               = false
+    // True while the path bar text field is active: file shortcuts (⌘C/⌘V/…) must not fire.
+    @State private var isEditingPath               = false
 
     // Persisted browse prefs — Finder-like defaults on first launch
     @AppStorage(UserPreferences.viewModeKey)       private var viewModeRaw       = UserPreferences.defaultViewMode.rawValue
@@ -85,7 +87,7 @@ struct ContentView: View {
                 .resetsCursorOnEnter()           // clears the divider's stuck resize cursor on entry
         } detail: {
             VStack(spacing: 0) {
-                PathBarView(currentPath: $currentPath)
+                PathBarView(currentPath: $currentPath, isEditing: $isEditingPath)
                     .resetsCursorOnEnter()   // clear a stuck resize cursor when moving up from the file list
                 SearchScopeView(currentPath: currentPath, searchEngine: searchEngine)
                     .resetsCursorOnEnter()
@@ -367,21 +369,21 @@ struct ContentView: View {
     private var keyboardShortcuts: some View {
         Group {
             Button("") { fileOps.undo() }
-                .keyboardShortcut("z", modifiers: .command).hidden()
+                .keyboardShortcut("z", modifiers: .command).hidden().disabled(isEditingPath)
             Button("") { fileOps.redo() }
-                .keyboardShortcut("z", modifiers: [.command, .shift]).hidden()
+                .keyboardShortcut("z", modifiers: [.command, .shift]).hidden().disabled(isEditingPath)
             Button("") {
                 let sel = displayFiles.filter { selectedIDs.contains($0.id) }
                 if !sel.isEmpty { fileOps.copy(sel.map(\.url)) }
-            }.keyboardShortcut("c", modifiers: .command).hidden()
+            }.keyboardShortcut("c", modifiers: .command).hidden().disabled(isEditingPath)
             Button("") {
                 let sel = displayFiles.filter { selectedIDs.contains($0.id) }
                 if !sel.isEmpty { fileOps.cut(sel.map(\.url)) }
-            }.keyboardShortcut("x", modifiers: .command).hidden()
+            }.keyboardShortcut("x", modifiers: .command).hidden().disabled(isEditingPath)
             Button("") { fileOps.paste(to: pasteDestination, reload: reload) }
-                .keyboardShortcut("v", modifiers: .command).hidden()
+                .keyboardShortcut("v", modifiers: .command).hidden().disabled(isEditingPath)
             Button("") { trashSelected() }
-                .keyboardShortcut(.delete, modifiers: .command).hidden()
+                .keyboardShortcut(.delete, modifiers: .command).hidden().disabled(isEditingPath)
             Button("") { goBack() }
                 .keyboardShortcut("[", modifiers: .command).hidden()
                 .disabled(backStack.isEmpty)
