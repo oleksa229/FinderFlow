@@ -21,6 +21,12 @@ struct ContentView: View {
     @AppStorage(UserPreferences.showHiddenKey)     private var showHidden        = false
     @AppStorage(UserPreferences.showPreviewKey)    private var showPreview       = false
     @AppStorage(UserPreferences.showColumnTreeKey) private var showColumnTree    = false
+    @AppStorage(UserPreferences.showListTreeKey)   private var showListTree      = false
+    // List tree mode: folders the user expanded, and their loaded (unsorted) contents.
+    @State private var expandedIDs:  Set<String>         = []
+    @State private var treeChildren: [String: [FileItem]] = [:]
+    @State private var treeLoadToken: [String: Int] = [:]   // newest load per folder wins
+    @State private var treeLoadCounter = 0
     @AppStorage(UserPreferences.didShowFirstRunKey) private var didShowFirstRun  = false
     @State private var showFirstRun = false
     @State private var folderWatcher = FolderChangeWatcher()
@@ -98,6 +104,7 @@ struct ContentView: View {
                     folderOrder:    folderOrderBinding,
                     showPreview:    $showPreview,
                     showColumnTree: $showColumnTree,
+                    showListTree:   $showListTree,
                     onReload:       reload
                 )
                 .resetsCursorOnEnter()
@@ -174,6 +181,9 @@ struct ContentView: View {
             // while the background reload runs.
             rawFiles = []
             selectedIDs = []
+            expandedIDs = []
+            treeChildren = [:]
+            treeLoadToken = [:]
             activeTagFilter = nil
             reload()
             watchOpenFolder()
@@ -181,14 +191,17 @@ struct ContentView: View {
         .onChange(of: sortFieldRaw)     { _, _  in
             rawFiles = sortedItems(rawFiles, by: sortField, ascending: sortAscending, folderOrder: folderOrder)
             resortSearchFiles()
+            resortTreeChildren()
         }
         .onChange(of: sortAscending) { _, _  in
             rawFiles = sortedItems(rawFiles, by: sortField, ascending: sortAscending, folderOrder: folderOrder)
             resortSearchFiles()
+            resortTreeChildren()
         }
         .onChange(of: folderOrderRaw)   { _, _  in
             rawFiles = sortedItems(rawFiles, by: sortField, ascending: sortAscending, folderOrder: folderOrder)
             resortSearchFiles()
+            resortTreeChildren()
         }
         .onChange(of: showHidden) { _, _ in reload() }
         .onReceive(NotificationCenter.default.publisher(for: .refreshDirectory)) { note in
@@ -405,6 +418,10 @@ struct ContentView: View {
                 sortField:        sortFieldBinding,
                 sortAscending:    $sortAscending,
                 groupBy:          groupBy,
+                showTree:         treeActive,
+                treeDepths:       treeDepths,
+                expandedIDs:      expandedIDs,
+                onToggleExpand:   toggleExpanded,
                 onNavigate:       navigateItem,
                 onBrowseInto:     { currentPath = $0 },
                 onReload:         reload,
@@ -468,7 +485,84 @@ struct ContentView: View {
         if !searchEngine.query.isEmpty {
             return rawFiles.filter { $0.name.localizedCaseInsensitiveContains(searchEngine.query) }
         }
-        return rawFiles
+        return treeActive ? treeRows.map(\.item) : rawFiles
+    }
+
+    // MARK: - List tree mode
+
+    /// Tree rows only exist in the plain (ungrouped) list with no search or tag filter.
+    private var treeActive: Bool {
+        showListTree && viewMode == .list && groupBy == .none
+            && activeTagFilter == nil && searchEngine.query.isEmpty && searchEngine.results.isEmpty
+    }
+
+    /// Visible rows: an expanded folder is followed by its children, one level deeper.
+    private var treeRows: [(item: FileItem, depth: Int)] {
+        var rows: [(item: FileItem, depth: Int)] = []
+        func walk(_ items: [FileItem], depth: Int) {
+            for item in items {
+                rows.append((item, depth))
+                if item.isBrowsableFolder, expandedIDs.contains(item.id),
+                   let kids = treeChildren[item.id] {
+                    walk(kids, depth: depth + 1)   // already sorted in treeChildren
+                }
+            }
+        }
+        walk(rawFiles, depth: 0)
+        return rows
+    }
+
+    private var treeDepths: [String: Int] {
+        guard treeActive else { return [:] }
+        return treeRows.reduce(into: [:]) { $0[$1.item.id] = $1.depth }
+    }
+
+    private func toggleExpanded(_ item: FileItem) {
+        if expandedIDs.contains(item.id) {
+            expandedIDs.remove(item.id)
+            treeChildren[item.id] = nil
+            treeLoadToken[item.id] = nil   // a load still running is dropped
+            selectedIDs = selectedIDs.filter { !$0.hasPrefix(item.id + "/") }
+        } else {
+            expandedIDs.insert(item.id)
+            loadChildren(id: item.id)
+        }
+    }
+
+    private func loadChildren(id: String) {
+        let url    = URL(fileURLWithPath: id)
+        let hidden = showHidden
+        treeLoadCounter &+= 1
+        let token = treeLoadCounter
+        treeLoadToken[id] = token
+        DispatchQueue.global(qos: .userInitiated).async {
+            let items = loadItems(at: url, showHidden: hidden)
+            let exists = FileManager.default.fileExists(atPath: id)
+            // Sort once here (with the current sort settings), so rendering only walks the rows.
+            DispatchQueue.main.async {
+                guard treeLoadToken[id] == token, expandedIDs.contains(id) else { return }
+                if !exists {   // folder was deleted, renamed or moved
+                    expandedIDs.remove(id)
+                    treeChildren[id] = nil
+                    treeLoadToken[id] = nil
+                    return
+                }
+                treeChildren[id] = sortedItems(items, by: sortField, ascending: sortAscending, folderOrder: folderOrder)
+            }
+        }
+    }
+
+    /// Sort settings changed: re-sort the loaded children of expanded folders.
+    private func resortTreeChildren() {
+        guard !treeChildren.isEmpty else { return }
+        treeChildren = treeChildren.mapValues {
+            sortedItems($0, by: sortField, ascending: sortAscending, folderOrder: folderOrder)
+        }
+    }
+
+    /// Re-read every expanded folder (after a reload, file-system change or hidden-files toggle).
+    private func refreshExpanded() {
+        for id in expandedIDs { loadChildren(id: id) }
     }
 
     // Spotlight (Mac-wide) results unioned with current-folder color matches, deduped
@@ -595,6 +689,7 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 guard gen == reloadGeneration else { return }
                 rawFiles = items
+                refreshExpanded()
                 then?()
             }
         }

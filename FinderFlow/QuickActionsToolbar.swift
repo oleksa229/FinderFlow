@@ -32,6 +32,7 @@ struct QuickActionsToolbar: View {
     @Binding var folderOrder:    FolderOrder
     @Binding var showPreview:    Bool
     @Binding var showColumnTree: Bool
+    @Binding var showListTree:   Bool
     let onReload: () -> Void
 
     @State private var apps = InstalledApps()
@@ -126,6 +127,17 @@ struct QuickActionsToolbar: View {
             .frame(width: 28)
             .help(groupBy == .none ? "Group By" : "Grouped by \(groupBy.menuTitle)")
 
+            if viewMode == .list {
+                Toggle(isOn: $showListTree) {
+                    Label("Tree", systemImage: "list.bullet.indent")
+                        .labelStyle(.iconOnly)
+                }
+                .toggleStyle(.button).buttonStyle(.borderless)
+                .disabled(groupBy != .none)
+                .help(groupBy != .none ? "Tree view works only when Group By is None"
+                      : (showListTree ? "Show as flat list" : "Show folders as a tree"))
+            }
+
             Toggle(isOn: $showPreview) {
                 Label("File Preview", systemImage: showPreview ? "doc.richtext.fill" : "doc.richtext")
                     .labelStyle(.iconOnly)
@@ -192,7 +204,7 @@ struct QuickActionsToolbar: View {
                     Image(systemName: mode.icon).tag(mode)
                 }
             }
-            .pickerStyle(.segmented).frame(width: 96).help("Switch view")
+            .pickerStyle(.segmented).labelsHidden().frame(width: 96).help("Switch view")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
