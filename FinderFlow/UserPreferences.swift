@@ -10,6 +10,7 @@ enum UserPreferences {
     static let folderOrderKey    = "ffFolderOrder"
     static let showHiddenKey     = "ffShowHidden"
     static let showPreviewKey    = "ffShowPreview"
+    static let previewWidthKey   = "ffPreviewWidth"
     static let showColumnTreeKey = "ffShowColumnTree"
     /// Bumped key so 1.5.1 re-runs migration for users who got a narrow 1.5 pass.
     static let defaultsMigratedKey = "ffBrowseDefaultsMigrated151"

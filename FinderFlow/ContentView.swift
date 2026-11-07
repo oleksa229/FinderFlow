@@ -12,6 +12,7 @@ struct ContentView: View {
 
     @State private var currentPath:     URL       = FileManager.default.homeDirectoryForCurrentUser
     @State private var sidebarItem:     SidebarItem?
+    @State private var browserAreaWidth: CGFloat   = 0   // list + preview area, to cap the preview width
 
     // Persisted browse prefs — Finder-like defaults on first launch
     @AppStorage(UserPreferences.viewModeKey)       private var viewModeRaw       = UserPreferences.defaultViewMode.rawValue
@@ -21,6 +22,7 @@ struct ContentView: View {
     @AppStorage(UserPreferences.folderOrderKey)    private var folderOrderRaw    = UserPreferences.defaultFolderOrder.rawValue
     @AppStorage(UserPreferences.showHiddenKey)     private var showHidden        = false
     @AppStorage(UserPreferences.showPreviewKey)    private var showPreview       = false
+    @AppStorage(UserPreferences.previewWidthKey)   private var previewWidth      = 260.0
     @AppStorage(UserPreferences.showColumnTreeKey) private var showColumnTree    = false
     @AppStorage(UserPreferences.didShowFirstRunKey) private var didShowFirstRun  = false
     @State private var showFirstRun = false
@@ -109,12 +111,20 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if showPreview && viewMode != .columns {
-                        Divider()
+                        ResizeHandle { delta in
+                            // Start from the width on screen, not the saved one (it can be wider than the window).
+                            previewWidth = clampedPreviewWidth(clampedPreviewWidth(previewWidth) - Double(delta))
+                        }
                         FilePreviewPanel(item: selectedItem)
-                            .frame(width: 260)
+                            .frame(width: clampedPreviewWidth(previewWidth))
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(GeometryReader { geo in
+                    Color.clear
+                        .onAppear { browserAreaWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, w in browserAreaWidth = w }
+                })
 
                 StatusBarView(files: displayFiles, selectedIDs: selectedIDs, currentPath: currentPath)
             }
@@ -299,6 +309,12 @@ struct ContentView: View {
         }) {
             FirstRunSheet(isPresented: $showFirstRun)
         }
+    }
+
+    /// Preview panel width: at least 180, and at most what leaves 300 pt for the file list.
+    private func clampedPreviewWidth(_ w: Double) -> Double {
+        let upper = browserAreaWidth > 0 ? max(180, Double(browserAreaWidth) - 300) : .greatestFiniteMagnitude
+        return min(max(180, w), upper)
     }
 
     // MARK: - Keyboard shortcuts (hidden buttons)
