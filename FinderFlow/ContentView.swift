@@ -13,6 +13,10 @@ struct ContentView: View {
     @State private var currentPath:     URL       = FileManager.default.homeDirectoryForCurrentUser
     @State private var sidebarItem:     SidebarItem?
     @State private var browserAreaWidth: CGFloat   = 0   // list + preview area, to cap the preview width
+    // Navigation history for Back / Forward
+    @State private var backStack:       [URL]     = []
+    @State private var forwardStack:    [URL]     = []
+    @State private var isHistoryJump               = false
 
     // Persisted browse prefs — Finder-like defaults on first launch
     @AppStorage(UserPreferences.viewModeKey)       private var viewModeRaw       = UserPreferences.defaultViewMode.rawValue
@@ -101,7 +105,11 @@ struct ContentView: View {
                     folderOrder:    folderOrderBinding,
                     showPreview:    $showPreview,
                     showColumnTree: $showColumnTree,
-                    onReload:       reload
+                    onReload:       reload,
+                    canGoBack:      !backStack.isEmpty,
+                    canGoForward:   !forwardStack.isEmpty,
+                    onGoBack:       goBack,
+                    onGoForward:    goForward
                 )
                 .resetsCursorOnEnter()
 
@@ -180,7 +188,13 @@ struct ContentView: View {
         }
         // Don't clear the icon cache on every navigation — NSCache evicts under
         // memory pressure automatically; keeping icons warm makes navigation fast.
-        .onChange(of: currentPath)   { _, _  in
+        .onChange(of: currentPath)   { old, _  in
+            if isHistoryJump {
+                isHistoryJump = false
+            } else {
+                backStack.append(old)
+                forwardStack = []
+            }
             // Instant feedback: clear stale listing so navigation doesn't look frozen
             // while the background reload runs.
             rawFiles = []
@@ -317,6 +331,34 @@ struct ContentView: View {
         return min(max(180, w), upper)
     }
 
+    // MARK: - Back / Forward history
+
+    private func isOpenableFolder(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    private func goBack() {
+        // Skip folders that no longer exist, and entries equal to the current folder.
+        while let target = backStack.popLast() {
+            guard target != currentPath, isOpenableFolder(target) else { continue }
+            forwardStack.append(currentPath)
+            isHistoryJump = true
+            currentPath = target
+            return
+        }
+    }
+
+    private func goForward() {
+        while let target = forwardStack.popLast() {
+            guard target != currentPath, isOpenableFolder(target) else { continue }
+            backStack.append(currentPath)
+            isHistoryJump = true
+            currentPath = target
+            return
+        }
+    }
+
     // MARK: - Keyboard shortcuts (hidden buttons)
     // Extracted from `body` to keep the main view expression within the Swift
     // type-checker's complexity budget.
@@ -340,6 +382,12 @@ struct ContentView: View {
                 .keyboardShortcut("v", modifiers: .command).hidden()
             Button("") { trashSelected() }
                 .keyboardShortcut(.delete, modifiers: .command).hidden()
+            Button("") { goBack() }
+                .keyboardShortcut("[", modifiers: .command).hidden()
+                .disabled(backStack.isEmpty)
+            Button("") { goForward() }
+                .keyboardShortcut("]", modifiers: .command).hidden()
+                .disabled(forwardStack.isEmpty)
         }
     }
 
