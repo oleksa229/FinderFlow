@@ -5,6 +5,18 @@ relative to the 1.0 release.
 
 ---
 
+## Unreleased
+
+- **Back and Forward** buttons in the toolbar, also on Command-[ and Command-], go through the folders you visited.
+- **The path bar** turns into a text field when you click the empty space right of the path, so you can type or paste a path. A path that is too long for the bar still needs a double-click.
+- **iCloud Drive** is in the sidebar Favorites.
+- **Open With** is in the context menu. It lists the apps that can open every selected item, and Other… lets you pick any app.
+- **HTML preview** is still Quick Look. A Run scripts button shows the selected file with JavaScript. Requests to http, https, ws, wss and ftp are blocked, but other channels such as WebRTC are not, so use it only for files you trust.
+- **List view** has a tree mode that opens folders in place, columns you can show or hide, and dragging from the whole row.
+- **The preview panel** can be resized by dragging its edge. It keeps room for the file list.
+
+---
+
 ## 1.5.4 — Clicks, sidebar, and live folders
 
 - **Clicking a name** selects the item in list, icon, and column view. Double-click opens it.
