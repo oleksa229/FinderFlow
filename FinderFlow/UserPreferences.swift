@@ -12,6 +12,8 @@ enum UserPreferences {
     static let showPreviewKey    = "ffShowPreview"
     static let previewWidthKey   = "ffPreviewWidth"
     static let showColumnTreeKey = "ffShowColumnTree"
+    static let showListTreeKey   = "ffShowListTree"
+    static let listColumnsKey    = "ffListColumns"
     /// Bumped key so 1.5.1 re-runs migration for users who got a narrow 1.5 pass.
     static let defaultsMigratedKey = "ffBrowseDefaultsMigrated151"
     static let didShowFirstRunKey  = "ffDidShowFirstRun"

@@ -15,6 +15,11 @@ struct ListView: View {
     @Binding var sortField:     SortField
     @Binding var sortAscending: Bool
     let groupBy:       GroupBy
+    /// Tree mode (ungrouped list only): rows carry an indent and a disclosure chevron.
+    let showTree:       Bool
+    let treeDepths:     [String: Int]
+    let expandedIDs:    Set<String>
+    let onToggleExpand: (FileItem) -> Void
     let onNavigate:    (FileItem) -> Void
     let onBrowseInto:  (URL) -> Void
     let onReload:      () -> Void
@@ -22,6 +27,8 @@ struct ListView: View {
     @ObservedObject var favorites: FavoritesService
 
     @State private var sortOrder:       [KeyPathComparator<FileItem>] = [.init(\.name, order: .forward)]
+    /// Which columns are shown and in what order (header right-click menu + drag). Saved between launches.
+    @State private var columnCustomization: TableColumnCustomization<FileItem> = Self.loadColumnCustomization()
     @State private var renamingID:      String?
     @State private var renameText:      String = ""
     @State private var renameCancelled: Bool   = false
@@ -54,9 +61,25 @@ struct ListView: View {
     // MARK: - Table (non-grouped)
 
     private var tableView: some View {
-        Table(files, selection: $selectedIDs, sortOrder: $sortOrder) {
+        Table(of: FileItem.self, selection: $selectedIDs, sortOrder: $sortOrder,
+              columnCustomization: $columnCustomization) {
             TableColumn("Name", value: \.name) { item in
                 HStack(spacing: 6) {
+                    if showTree {
+                        Color.clear.frame(width: CGFloat(treeDepths[item.id, default: 0]) * 16, height: 1)
+                        if item.isBrowsableFolder {
+                            Button { onToggleExpand(item) } label: {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .rotationEffect(.degrees(expandedIDs.contains(item.id) ? 90 : 0))
+                                    .frame(width: 12, height: 16)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Color.clear.frame(width: 12, height: 1)
+                        }
+                    }
                     Image(nsImage: item.icon).resizable().frame(width: 16, height: 16)
                         .allowsHitTesting(false)
                     if renamingID == item.id {
@@ -79,32 +102,41 @@ struct ListView: View {
                     TagDotsView(colors: item.tagColors, size: 10)
                         .allowsHitTesting(false)
                 }
-                .contentShape(Rectangle())
-                .fileDragOut(item: item, files: files, selectedIDs: selectedIDs)
             }
             .width(min: 140, ideal: 280, max: 600)
+            .customizationID("name")
+            .disabledCustomizationBehavior(.visibility)   // Name stays: it holds the icon, tree chevron and rename
 
             TableColumn("Date Modified", value: \.dateModified) { item in
                 Text(item.formattedDateModified).foregroundStyle(.secondary)
-            }.width(min: 100, ideal: 148, max: 240)
+            }.width(min: 100, ideal: 148, max: 240).customizationID("dateModified")
 
             TableColumn("Date Created", value: \.dateCreated) { item in
                 Text(item.formattedDateCreated).foregroundStyle(.secondary)
-            }.width(min: 100, ideal: 148, max: 240)
+            }.width(min: 100, ideal: 148, max: 240).customizationID("dateCreated")
 
             TableColumn("Size", value: \.size) { item in
                 Text(item.formattedSize).foregroundStyle(.secondary).monospacedDigit()
                     .frame(maxWidth: .infinity, alignment: .trailing)
-            }.width(min: 50, ideal: 80, max: 140)
+            }.width(min: 50, ideal: 80, max: 140).customizationID("size")
 
             TableColumn("Kind", value: \.kind) { item in
                 Text(item.kind).foregroundStyle(.secondary)
-            }.width(min: 60, ideal: 110, max: 200)
+            }.width(min: 60, ideal: 110, max: 200).customizationID("kind")
 
             TableColumn("Extension", value: \.fileExtension) { item in
                 Text(item.fileExtension.isEmpty ? "—" : item.fileExtension.uppercased())
                     .foregroundStyle(.secondary)
-            }.width(min: 40, ideal: 68, max: 120)
+            }.width(min: 40, ideal: 68, max: 120).customizationID("extension")
+        } rows: {
+            // Drag lives on the row, not on the Name cell: a cell-level onDrag swallowed
+            // the click whenever the pointer was over the icon or the name text.
+            ForEach(files) { item in
+                TableRow(item).itemProvider {
+                    FileDragSupport.provider(
+                        for: FileDragSupport.urlsForDrag(item: item, files: files, selectedIDs: selectedIDs))
+                }
+            }
         }
         .onChange(of: sortOrder) { _, order in
             guard let first = order.first else { return }
@@ -131,7 +163,13 @@ struct ListView: View {
                   let item = files.first(where: { $0.id == id }) else { return }
             commitRename(for: item)
         }
-        .onAppear { syncSortOrder() }
+        .onAppear { sortByNameIfSortColumnHidden(); syncSortOrder() }
+        .onChange(of: columnCustomization) { _, value in
+            if let data = try? JSONEncoder().encode(value) {
+                UserDefaults.standard.set(data, forKey: UserPreferences.listColumnsKey)
+            }
+            sortByNameIfSortColumnHidden()
+        }
         .contextMenu(forSelectionType: String.self) { ids in
             if ids.isEmpty {
                 FolderBackgroundMenu()
@@ -163,6 +201,28 @@ struct ListView: View {
                 NSCursor.arrow.set()
             }
         }
+    }
+
+    private static func loadColumnCustomization() -> TableColumnCustomization<FileItem> {
+        guard let data = UserDefaults.standard.data(forKey: UserPreferences.listColumnsKey),
+              let value = try? JSONDecoder().decode(TableColumnCustomization<FileItem>.self, from: data)
+        else { return TableColumnCustomization<FileItem>() }
+        return value
+    }
+
+    /// A hidden column gives no sort indicator, so the order would look random.
+    /// If the active sort column is hidden, fall back to Name (which cannot be hidden).
+    private func sortByNameIfSortColumnHidden() {
+        let id: String
+        switch sortField {
+        case .name:         return
+        case .dateModified: id = "dateModified"
+        case .dateCreated:  id = "dateCreated"
+        case .size:         id = "size"
+        case .kind:         id = "kind"
+        case .ext:          id = "extension"
+        }
+        if columnCustomization[visibility: id] == .hidden { sortField = .name }
     }
 
     private func syncSortOrder() {
