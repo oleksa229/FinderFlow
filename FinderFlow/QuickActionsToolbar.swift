@@ -33,6 +33,10 @@ struct QuickActionsToolbar: View {
     @Binding var showPreview:    Bool
     @Binding var showColumnTree: Bool
     let onReload: () -> Void
+    let canGoBack:    Bool
+    let canGoForward: Bool
+    let onGoBack:     () -> Void
+    let onGoForward:  () -> Void
 
     @State private var apps = InstalledApps()
 
@@ -40,6 +44,14 @@ struct QuickActionsToolbar: View {
 
     var body: some View {
         HStack(spacing: 6) {
+
+            // ── History ───────────────────────────────────────────────────
+            ToolbarActionButton(icon: "chevron.left",  label: "Back") { onGoBack() }
+                .disabled(!canGoBack)
+            ToolbarActionButton(icon: "chevron.right", label: "Forward") { onGoForward() }
+                .disabled(!canGoForward)
+
+            Divider().frame(height: 20)
 
             // ── Create ────────────────────────────────────────────────────
             ToolbarActionButton(icon: "folder.badge.plus", label: "New Folder") { onCreateFolder() }
