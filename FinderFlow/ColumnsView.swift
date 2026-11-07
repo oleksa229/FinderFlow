@@ -286,7 +286,7 @@ struct ColumnPreviewPane: View {
 // .enabledDuringMouseDrag) but suppress the arrow reset, so the resize cursor
 // stays put while you actually resize.
 
-private struct ResizeHandle: View {
+struct ResizeHandle: View {
     let onDrag: (CGFloat) -> Void
     @State private var hovering:  Bool    = false
     @State private var dragging:  Bool    = false
@@ -303,8 +303,9 @@ private struct ResizeHandle: View {
                     .frame(width: 1)
             )
             .overlay(ResizeCursorTracker(isHovering: $hovering, isDragging: $dragging))
+            .contentShape(Rectangle())   // Color.clear isn't hit-testable; make the whole 8-pt strip grabbable
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { v in
                         dragging = true
                         NSCursor.resizeLeftRight.set()   // keep resize cursor for the whole drag
@@ -332,13 +333,31 @@ private struct ResizeCursorTracker: NSViewRepresentable {
     func makeNSView(context: Context) -> _ResizeCursorTrackerView {
         _ResizeCursorTrackerView(isHovering: $isHovering, isDragging: $isDragging)
     }
-    func updateNSView(_ v: _ResizeCursorTrackerView, context: Context) {}
+    func updateNSView(_ v: _ResizeCursorTrackerView, context: Context) {
+        v.dragStateChanged(isDragging)
+    }
 }
 
 private final class _ResizeCursorTrackerView: NSView {
     private var _isHovering: Binding<Bool>
     private var _isDragging: Binding<Bool>
     private var trackingArea: NSTrackingArea?
+    private var wasDragging = false
+
+    /// When a drag ends, the pointer may be far from the handle and no exit event
+    /// was delivered during the drag. Re-check the real position so the resize
+    /// cursor (and highlight) don't stay stuck.
+    func dragStateChanged(_ dragging: Bool) {
+        defer { wasDragging = dragging }
+        guard wasDragging, !dragging else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window else { return }
+            let p = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            let inside = self.bounds.contains(p)
+            self._isHovering.wrappedValue = inside
+            (inside ? NSCursor.resizeLeftRight : NSCursor.arrow).set()
+        }
+    }
 
     init(isHovering: Binding<Bool>, isDragging: Binding<Bool>) {
         self._isHovering = isHovering
