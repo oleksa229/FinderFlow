@@ -76,6 +76,7 @@ struct IconsView: View {
         let urls    = targets.map(\.url)
 
         Button("Open") { onNavigate(item) }
+        OpenWithMenu(urls: urls)
         if item.isBrowsableFolder {
             Button("Open in New Window") { NSWorkspace.shared.open(item.url) }
         } else if item.isPackage {

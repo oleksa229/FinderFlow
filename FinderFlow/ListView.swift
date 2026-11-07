@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import AppKit
 
 // Approximate height of the Table's column header row. Below this strip the pointer
@@ -208,6 +209,7 @@ struct ListView: View {
             let urls = sel.map(\.url)
 
             Button("Open")               { onNavigate(item) }
+            OpenWithMenu(urls: urls)
             if item.isBrowsableFolder {
                 Button("Open in New Window") { NSWorkspace.shared.open(item.url) }
             } else if item.isPackage {
@@ -436,6 +438,7 @@ struct GroupedListView: View {
         let urls    = targets.map(\.url)
 
         Button("Open")       { onNavigate(item) }
+        OpenWithMenu(urls: urls)
         if item.isBrowsableFolder {
             Button("Open in New Window") { NSWorkspace.shared.open(item.url) }
         } else if item.isPackage {
@@ -561,5 +564,93 @@ struct FolderBackgroundMenu: View {
         Button("New File") {
             NotificationCenter.default.post(name: .createNewFile, object: nil)
         }
+    }
+}
+
+
+// MARK: - "Open With" context menu item
+// Lists the apps macOS says can open every selected item (the default app of the
+// first item comes first), plus "Other…" to pick any app. The chosen app opens all
+// selected items.
+
+struct OpenWithMenu: View {
+    let urls: [URL]
+
+    var body: some View {
+        if let first = urls.first {
+            Menu("Open With") {
+                let apps = Self.apps(for: urls)
+                ForEach(apps, id: \.path) { app in
+                    Button { Self.open(urls, with: app) } label: {
+                        Label {
+                            Text(Self.name(of: app, isDefault: app == apps.first && Self.isDefault(app, for: first)))
+                        } icon: {
+                            Image(nsImage: Self.icon(of: app))
+                        }
+                    }
+                }
+                if !apps.isEmpty { Divider() }
+                Button("Other…") { Self.chooseApp(for: urls) }
+            }
+        }
+    }
+
+    private static func isDefault(_ app: URL, for url: URL) -> Bool {
+        NSWorkspace.shared.urlForApplication(toOpen: url) == app
+    }
+
+    private static func apps(for urls: [URL]) -> [URL] {
+        guard let url = urls.first else { return [] }
+        let ws = NSWorkspace.shared
+        var seen = Set<String>()
+        var list = ws.urlsForApplications(toOpen: url).filter { seen.insert($0.path).inserted }
+        // Keep only apps that can open every selected item (like Finder).
+        for other in urls.dropFirst() {
+            let paths = Set(ws.urlsForApplications(toOpen: other).map(\.path))
+            list.removeAll { !paths.contains($0.path) }
+        }
+        // Look up each display name once, not on every comparison.
+        let names = Dictionary(uniqueKeysWithValues: list.map { ($0.path, name(of: $0, isDefault: false)) })
+        list.sort { (names[$0.path] ?? "").localizedStandardCompare(names[$1.path] ?? "") == .orderedAscending }
+        if let def = ws.urlForApplication(toOpen: url), list.contains(def) {
+            list.removeAll { $0 == def }
+            list.insert(def, at: 0)
+        }
+        return list
+    }
+
+    private static func name(of app: URL, isDefault: Bool) -> String {
+        let n = FileManager.default.displayName(atPath: app.path)
+        let base = n.hasSuffix(".app") ? String(n.dropLast(4)) : n
+        return isDefault ? "\(base) (default)" : base
+    }
+
+    private static func icon(of app: URL) -> NSImage {
+        let img = NSWorkspace.shared.icon(forFile: app.path)
+        img.size = NSSize(width: 16, height: 16)
+        return img
+    }
+
+    private static func open(_ urls: [URL], with app: URL) {
+        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "Could not open with \(name(of: app, isDefault: false))"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+            }
+        }
+    }
+
+    private static func chooseApp(for urls: [URL]) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Application"
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let app = panel.url else { return }
+        open(urls, with: app)
     }
 }

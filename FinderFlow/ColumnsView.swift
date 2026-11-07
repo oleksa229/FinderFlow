@@ -184,6 +184,7 @@ struct ColumnsView: View {
                 onOpen(item.url)
             }
         }
+        OpenWithMenu(urls: [item.url])
         if item.isBrowsableFolder {
             Button("Open in New Window") { NSWorkspace.shared.open(item.url) }
         }
@@ -490,6 +491,7 @@ struct ColumnPane: View {
                 onOpen(item.url)
             }
         }
+        OpenWithMenu(urls: [item.url])
         if item.isBrowsableFolder {
             Button("Open in New Window") { NSWorkspace.shared.open(item.url) }
         } else if item.isPackage {
