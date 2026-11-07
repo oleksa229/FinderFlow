@@ -53,6 +53,7 @@ struct SidebarView: View {
     let usedTagNames: [String]
     @EnvironmentObject var favorites: FavoritesService
     @State private var recentFolders: [URL] = []
+    @State private var iCloudDriveURL: URL?   // checked once on appear, not on every redraw
 
     var body: some View {
         List(selection: $selection) {
@@ -101,7 +102,12 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .onAppear { loadRecent() }
+        .onAppear {
+            loadRecent()
+            let url = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
+            iCloudDriveURL = FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
         .onChange(of: selection) { _, item in
             guard let url = item?.folderURL, url != currentPath else { return }
             // Defer so the sidebar list is not rebuilt inside its own selection update.
@@ -122,6 +128,7 @@ struct SidebarView: View {
             fm.urls(for: .desktopDirectory,  in: .userDomainMask).first,
             fm.urls(for: .documentDirectory, in: .userDomainMask).first,
             fm.urls(for: .downloadsDirectory, in: .userDomainMask).first,
+            iCloudDriveURL,
         ].compactMap { $0 }
     }
 
@@ -170,7 +177,8 @@ struct SidebarView: View {
 struct SidebarRow: View {
     let url: URL
     private var displayName: String {
-        url.lastPathComponent.isEmpty ? "Macintosh HD" : url.lastPathComponent
+        if url.lastPathComponent == "com~apple~CloudDocs" { return "iCloud Drive" }
+        return url.lastPathComponent.isEmpty ? "Macintosh HD" : url.lastPathComponent
     }
     var body: some View {
         Label {
