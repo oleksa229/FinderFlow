@@ -208,6 +208,88 @@ class FileOperationsService: ObservableObject {
         }
     }
 
+    // MARK: Drag and drop onto a folder
+
+    /// Finder rules: on the same volume the items move, on another volume they copy.
+    /// `forceCopy` (Option key) copies in both cases.
+    func drop(_ urls: [URL], onto folder: URL, forceCopy: Bool, reload: @escaping () -> Void) {
+        let folderPath = folder.standardizedFileURL.path
+        // Skip: item already in this folder, the folder itself, or a parent of the folder.
+        let sources = urls.filter { src in
+            let s = src.standardizedFileURL
+            if s.deletingLastPathComponent().path == folderPath && !forceCopy { return false }
+            if s.path == folderPath { return false }
+            if folderPath.hasPrefix(s.path + "/") { return false }
+            return true
+        }
+        guard !sources.isEmpty else { return }
+
+        let destVolume = try? folder.resourceValues(forKeys: [.volumeIdentifierKey]).volumeIdentifier as? NSObject
+
+        var done: [DroppedItem] = []
+        for src in sources {
+            let srcVolume = try? src.resourceValues(forKeys: [.volumeIdentifierKey]).volumeIdentifier as? NSObject
+            let sameVolume = (srcVolume != nil && srcVolume == destVolume)
+            let move = sameVolume && !forceCopy
+            let dest = uniqueURL(for: folder.appendingPathComponent(src.lastPathComponent))
+            do {
+                if move { try FileManager.default.moveItem(at: src, to: dest) }
+                else    { try FileManager.default.copyItem(at: src, to: dest) }
+                done.append(DroppedItem(src: src, dest: dest, moved: move))
+            } catch {
+                DispatchQueue.main.async { self.errorMessage = error.localizedDescription }
+                break
+            }
+        }
+        guard !done.isEmpty else { return }
+
+        let anyMoved = done.contains { $0.moved }
+        registerDropUndo(done, actionName: anyMoved ? "Move" : "Copy", reload: reload)
+        objectWillChange.send()
+
+        let label = done.count == 1 ? "\"\(done[0].dest.lastPathComponent)\"" : "\(done.count) items"
+        DispatchQueue.main.async {
+            self.lastActionFeedback = ActionFeedback(
+                icon: anyMoved ? "folder" : "doc.on.doc",
+                message: (anyMoved ? "Moved " : "Copied ") + label + " to \"\(folder.lastPathComponent)\""
+            )
+            self.lastOpURL = done.first?.dest
+            reload()
+        }
+    }
+
+    private struct DroppedItem {
+        let src: URL
+        let dest: URL
+        let moved: Bool
+    }
+
+    /// Undo: moved items go back, copies are removed. Running it registers the redo.
+    private func registerDropUndo(_ done: [DroppedItem], actionName: String, reload: @escaping () -> Void) {
+        undoMgr.registerUndo(withTarget: self) { svc in
+            for d in done {
+                if d.moved { try? FileManager.default.moveItem(at: d.dest, to: d.src) }
+                else       { try? FileManager.default.removeItem(at: d.dest) }
+            }
+            reload()
+            svc.registerDropRedo(done, actionName: actionName, reload: reload)
+        }
+        undoMgr.setActionName(actionName)
+    }
+
+    /// Redo: do the drop again to the same destination names. Running it registers the undo.
+    private func registerDropRedo(_ done: [DroppedItem], actionName: String, reload: @escaping () -> Void) {
+        undoMgr.registerUndo(withTarget: self) { svc in
+            for d in done {
+                if d.moved { try? FileManager.default.moveItem(at: d.src, to: d.dest) }
+                else       { try? FileManager.default.copyItem(at: d.src, to: d.dest) }
+            }
+            reload()
+            svc.registerDropUndo(done, actionName: actionName, reload: reload)
+        }
+        undoMgr.setActionName(actionName)
+    }
+
     // MARK: Rename
 
     func rename(_ url: URL, to newName: String, reload: @escaping () -> Void) {

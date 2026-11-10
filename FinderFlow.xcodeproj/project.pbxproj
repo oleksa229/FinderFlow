@@ -25,6 +25,7 @@
 		BBBBBBBBBBBBBBBBBBBB0008 /* ColumnsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBBBBBBBBBBBBBBBBBB0007 /* ColumnsView.swift */; };
 		BBBBBBBBBBBBBBBBBBBB000A /* StatusBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBBBBBBBBBBBBBBBBBB0009 /* StatusBarView.swift */; };
 		EEEEEEEEEEEEEEEEEEEE0002 /* FileDragSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEEEEEEEEEEEEEEEEEEE0001 /* FileDragSupport.swift */; };
+		FFFFFFFFFFFFFFFFFFFF0002 /* MJPEGAVIPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFFFFFFFFFFFFFFFFFFF0001 /* MJPEGAVIPlayer.swift */; };
 		CCCCCCCCCCCCCCCCCCCC0002 /* MarkdownReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCCCCCCCCCCCCCCCCCC0001 /* MarkdownReaderView.swift */; };
 		CCCCCCCCCCCCCCCCCCCC0004 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCCCCCCCCCCCCCCCCCC0003 /* SettingsView.swift */; };
 		CCCCCCCCCCCCCCCCCCCC0006 /* CodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCCCCCCCCCCCCCCCCCC0005 /* CodeEditorView.swift */; };
@@ -90,6 +91,7 @@
 		BBBBBBBBBBBBBBBBBBBB0007 /* ColumnsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColumnsView.swift; sourceTree = "<group>"; };
 		BBBBBBBBBBBBBBBBBBBB0009 /* StatusBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarView.swift; sourceTree = "<group>"; };
 		EEEEEEEEEEEEEEEEEEEE0001 /* FileDragSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileDragSupport.swift; sourceTree = "<group>"; };
+		FFFFFFFFFFFFFFFFFFFF0001 /* MJPEGAVIPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MJPEGAVIPlayer.swift; sourceTree = "<group>"; };
 		CCCCCCCCCCCCCCCCCCCC0001 /* MarkdownReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownReaderView.swift; sourceTree = "<group>"; };
 		CCCCCCCCCCCCCCCCCCCC0003 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		CCCCCCCCCCCCCCCCCCCC0005 /* CodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorView.swift; sourceTree = "<group>"; };
@@ -174,6 +176,7 @@
 				BBBBBBBBBBBBBBBBBBBB0007 /* ColumnsView.swift */,
 				BBBBBBBBBBBBBBBBBBBB0009 /* StatusBarView.swift */,
 				EEEEEEEEEEEEEEEEEEEE0001 /* FileDragSupport.swift */,
+				FFFFFFFFFFFFFFFFFFFF0001 /* MJPEGAVIPlayer.swift */,
 				CCCCCCCCCCCCCCCCCCCC0001 /* MarkdownReaderView.swift */,
 				CCCCCCCCCCCCCCCCCCCC0003 /* SettingsView.swift */,
 				CCCCCCCCCCCCCCCCCCCC0005 /* CodeEditorView.swift */,
@@ -361,6 +364,7 @@
 				BBBBBBBBBBBBBBBBBBBB0008 /* ColumnsView.swift in Sources */,
 				BBBBBBBBBBBBBBBBBBBB000A /* StatusBarView.swift in Sources */,
 				EEEEEEEEEEEEEEEEEEEE0002 /* FileDragSupport.swift in Sources */,
+				FFFFFFFFFFFFFFFFFFFF0002 /* MJPEGAVIPlayer.swift in Sources */,
 				CCCCCCCCCCCCCCCCCCCC0002 /* MarkdownReaderView.swift in Sources */,
 				CCCCCCCCCCCCCCCCCCCC0004 /* SettingsView.swift in Sources */,
 				CCCCCCCCCCCCCCCCCCCC0006 /* CodeEditorView.swift in Sources */,
