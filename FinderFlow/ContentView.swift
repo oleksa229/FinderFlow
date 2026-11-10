@@ -918,10 +918,45 @@ struct QLSidebarPreview: View {
     @State private var scriptsURL: URL?
     @State private var scriptsUnavailable = false   // the network block could not be set up
 
+    /// MJPEG AVI that macOS cannot decode gets our own player instead of Quick Look.
+    @State private var aviChecked: URL?
+    @State private var aviReader: MJPEGAVIReader?
+
     private var isHTML: Bool { _QLSidebarHost.isHTML(url) }
     private var running: Bool { scriptsURL == url }
+    private var isAVI: Bool { url.pathExtension.lowercased() == "avi" }
 
     var body: some View {
+        aviAwareBody
+            // Decide again whenever another file is selected. This also closes the AVI file,
+            // so a drive is not kept busy and a file that is still being written is read anew.
+            .onChange(of: url) { _, _ in aviChecked = nil; aviReader = nil }
+    }
+
+    @ViewBuilder
+    private var aviAwareBody: some View {
+        if !isAVI {
+            quickLook
+        } else if aviChecked == url {
+            if let reader = aviReader, reader.url == url {
+                MJPEGAVIPlayerView(reader: reader).id(url)
+            } else {
+                quickLook
+            }
+        } else {
+            // Decide first, so Quick Look is not started on a file it cannot show.
+            ProgressView().controlSize(.small)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .task(id: url) {
+                    let reader = await MJPEGAVIReader.readerIfSystemCannotPlay(url)
+                    guard !Task.isCancelled else { return }
+                    aviReader = reader
+                    aviChecked = url
+                }
+        }
+    }
+
+    private var quickLook: some View {
         VStack(spacing: 0) {
             if isHTML {
                 HStack(spacing: 8) {
