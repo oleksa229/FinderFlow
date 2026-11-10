@@ -132,9 +132,14 @@ struct ListView: View {
             // Drag lives on the row, not on the Name cell: a cell-level onDrag swallowed
             // the click whenever the pointer was over the icon or the name text.
             ForEach(files) { item in
-                TableRow(item).itemProvider {
-                    FileDragSupport.provider(
-                        for: FileDragSupport.urlsForDrag(item: item, files: files, selectedIDs: selectedIDs))
+                if item.isBrowsableFolder {
+                    TableRow(item)
+                        .itemProvider { dragProvider(for: item) }
+                        .dropDestination(for: URL.self) { urls in dropOnFolder(urls, item) }
+                } else {
+                    TableRow(item)
+                        .itemProvider { dragProvider(for: item) }
+                        .dropDestination(for: URL.self) { _ in dropNextTo(item) }
                 }
             }
         }
@@ -201,6 +206,48 @@ struct ListView: View {
                 NSCursor.arrow.set()
             }
         }
+        .onDrop(of: [.fileURL], isTargeted: nil) { _ in
+            dropIntoCurrentFolder()
+            return true
+        }
+    }
+
+    private func dragProvider(for item: FileItem) -> NSItemProvider {
+        // Table makes one drag item per selected row, so each row carries only its own
+        // file. (A provider with the whole selection exposed just its first file as a
+        // file URL, so two selected files arrived as the same file twice.)
+        FileDragSupport.provider(for: [item.url])
+    }
+
+    /// File URLs of the drag in progress. SwiftUI hands over 0 URLs for our drags: the
+    /// item also carries a file promise (added by NSItemProvider(contentsOf:)) and the
+    /// URL decoding gives up on it. The file URLs are still on the drag pasteboard.
+    private func draggedURLs(fallback urls: [URL]) -> [URL] {
+        let fromPasteboard = NSPasteboard(name: .drag)
+            .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        return fromPasteboard.isEmpty ? urls : fromPasteboard
+    }
+
+    private func dropOnFolder(_ urls: [URL], _ item: FileItem) {
+        fileOps.drop(draggedURLs(fallback: urls), onto: item.url,
+                     forceCopy: NSEvent.modifierFlags.contains(.option),
+                     reload: onReload)
+    }
+
+    /// Drop on a file row: the items go into the folder that holds that file. In tree
+    /// mode this is the expanded subfolder the row belongs to, otherwise the open folder.
+    private func dropNextTo(_ item: FileItem) {
+        let folder = showTree ? item.url.deletingLastPathComponent() : currentPath
+        fileOps.drop(draggedURLs(fallback: []), onto: folder,
+                     forceCopy: NSEvent.modifierFlags.contains(.option),
+                     reload: onReload)
+    }
+
+    /// Drop on the list itself (empty area): the items go into the open folder.
+    private func dropIntoCurrentFolder() {
+        fileOps.drop(draggedURLs(fallback: []), onto: currentPath,
+                     forceCopy: NSEvent.modifierFlags.contains(.option),
+                     reload: onReload)
     }
 
     private static func loadColumnCustomization() -> TableColumnCustomization<FileItem> {
