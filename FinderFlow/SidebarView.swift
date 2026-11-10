@@ -54,6 +54,7 @@ struct SidebarView: View {
     @EnvironmentObject var favorites: FavoritesService
     @State private var recentFolders: [URL] = []
     @State private var iCloudDriveURL: URL?   // checked once on appear, not on every redraw
+    @State private var volumes: [MountedVolume] = []
 
     var body: some View {
         List(selection: $selection) {
@@ -63,6 +64,16 @@ struct SidebarView: View {
                 ForEach(systemLocations, id: \.self) { url in
                     SidebarRow(url: url)
                         .tag(SidebarItem.location(url))
+                }
+            }
+
+            // ── Mounted volumes (internal disk, USB drives, disk images, network shares) ──
+            if !volumes.isEmpty {
+                Section("Locations") {
+                    ForEach(volumes) { volume in
+                        SidebarRow(url: volume.url, name: volume.name)
+                            .tag(SidebarItem.location(volume.url))
+                    }
                 }
             }
 
@@ -104,9 +115,20 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .onAppear {
             loadRecent()
+            volumes = MountedVolume.current()
             let url = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
             iCloudDriveURL = FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        // Keep the list in step when a drive is plugged in, ejected or renamed.
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in
+            volumes = MountedVolume.current()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in
+            volumes = MountedVolume.current()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didRenameVolumeNotification)) { _ in
+            volumes = MountedVolume.current()
         }
         .onChange(of: selection) { _, item in
             guard let url = item?.folderURL, url != currentPath else { return }
@@ -174,9 +196,30 @@ struct SidebarView: View {
     }
 }
 
+struct MountedVolume: Identifiable, Equatable {
+    let url: URL
+    let name: String
+    var id: URL { url }
+
+    /// Volumes Finder shows: hidden system volumes (Data, Preboot, VM...) are skipped.
+    static func current() -> [MountedVolume] {
+        let keys: [URLResourceKey] = [.volumeLocalizedNameKey, .volumeNameKey]
+        let urls = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
+        return urls.map { url in
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            let name = values?.volumeLocalizedName ?? values?.volumeName
+                ?? FileManager.default.displayName(atPath: url.path)
+            return MountedVolume(url: url, name: name)
+        }
+    }
+}
+
 struct SidebarRow: View {
     let url: URL
+    var name: String? = nil
     private var displayName: String {
+        if let name { return name }
         if url.lastPathComponent == "com~apple~CloudDocs" { return "iCloud Drive" }
         return url.lastPathComponent.isEmpty ? "Macintosh HD" : url.lastPathComponent
     }
