@@ -19,6 +19,7 @@ struct ListView: View {
     let showTree:       Bool
     let treeDepths:     [String: Int]
     let expandedIDs:    Set<String>
+    let emptyFolderIDs: Set<String>
     let onToggleExpand: (FileItem) -> Void
     let onNavigate:    (FileItem) -> Void
     let onBrowseInto:  (URL) -> Void
@@ -67,7 +68,7 @@ struct ListView: View {
                 HStack(spacing: 6) {
                     if showTree {
                         Color.clear.frame(width: CGFloat(treeDepths[item.id, default: 0]) * 16, height: 1)
-                        if item.isBrowsableFolder {
+                        if item.isBrowsableFolder && !emptyFolderIDs.contains(item.id) {
                             Button { onToggleExpand(item) } label: {
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 9, weight: .semibold))

@@ -36,9 +36,12 @@ struct ContentView: View {
     @State private var treeChildren: [String: [FileItem]] = [:]
     @State private var treeLoadToken: [String: Int] = [:]   // newest load per folder wins
     @State private var treeLoadCounter = 0
+    @State private var emptyFolderIDs: Set<String> = []   // visible folder rows with nothing inside: no chevron
+    @State private var emptyScanCounter = 0
     @AppStorage(UserPreferences.didShowFirstRunKey) private var didShowFirstRun  = false
     @State private var showFirstRun = false
     @State private var folderWatcher = FolderChangeWatcher()
+    @State private var treeWatchers = TreeWatchers()   // one watcher per expanded folder in tree mode
 
     private var viewMode: ViewMode       { ViewMode.fromStorage(viewModeRaw) }
     private var sortField: SortField     { SortField.fromStorage(sortFieldRaw) }
@@ -231,9 +234,19 @@ struct ContentView: View {
             resortTreeChildren()
         }
         .onChange(of: showHidden) { _, _ in reload() }
+        .onChange(of: treeActive) { _, active in
+            if active { refreshExpanded() }   // files may have changed while the tree was hidden
+            scanEmptyFolders()
+            syncTreeWatchers()
+        }
+        .onChange(of: expandedIDs) { _, _ in syncTreeWatchers() }
         .onReceive(NotificationCenter.default.publisher(for: .refreshDirectory)) { note in
-            guard let url = note.object as? URL, url == currentPath else { return }
-            reload()
+            guard let url = note.object as? URL else { return }
+            if url == currentPath {
+                reload()
+            } else if treeActive, expandedIDs.contains(url.path) {
+                loadChildren(id: url.path)   // an expanded subfolder changed: read just that one
+            }
         }
         // Recompute Spotlight search results in background (never on the render thread)
         .onChange(of: searchEngine.results) { _, results in
@@ -488,6 +501,7 @@ struct ContentView: View {
                 showTree:         treeActive,
                 treeDepths:       treeDepths,
                 expandedIDs:      expandedIDs,
+                emptyFolderIDs:   emptyFolderIDs,
                 onToggleExpand:   toggleExpanded,
                 onNavigate:       navigateItem,
                 onBrowseInto:     { currentPath = $0 },
@@ -586,10 +600,13 @@ struct ContentView: View {
 
     private func toggleExpanded(_ item: FileItem) {
         if expandedIDs.contains(item.id) {
-            expandedIDs.remove(item.id)
-            treeChildren[item.id] = nil
-            treeLoadToken[item.id] = nil   // a load still running is dropped
-            selectedIDs = selectedIDs.filter { !$0.hasPrefix(item.id + "/") }
+            // Collapse the folder and every expanded folder inside it, so none of them is
+            // reloaded, watched or shown with old children when this folder opens again.
+            let inside = item.id + "/"
+            expandedIDs = expandedIDs.filter { $0 != item.id && !$0.hasPrefix(inside) }
+            treeChildren = treeChildren.filter { $0.key != item.id && !$0.key.hasPrefix(inside) }
+            treeLoadToken = treeLoadToken.filter { $0.key != item.id && !$0.key.hasPrefix(inside) }   // loads still running are dropped
+            selectedIDs = selectedIDs.filter { !$0.hasPrefix(inside) }
         } else {
             expandedIDs.insert(item.id)
             loadChildren(id: item.id)
@@ -615,6 +632,34 @@ struct ContentView: View {
                     return
                 }
                 treeChildren[id] = sortedItems(items, by: sortField, ascending: sortAscending, folderOrder: folderOrder)
+                scanEmptyFolders()
+            }
+        }
+    }
+
+    /// Find which visible folder rows are empty, so the tree shows no chevron for them.
+    /// "Empty" matches what expanding would show: hidden files count only when they are
+    /// shown. A folder that cannot be read keeps its chevron. Runs off the main thread
+    /// and only looks for the first entry of each folder.
+    private func scanEmptyFolders() {
+        guard treeActive else { emptyFolderIDs = []; return }
+        let folders = treeRows.map(\.item).filter(\.isBrowsableFolder).map(\.url)
+        let hidden  = showHidden
+        emptyScanCounter &+= 1
+        let token = emptyScanCounter
+        DispatchQueue.global(qos: .utility).async {
+            let opts: FileManager.DirectoryEnumerationOptions =
+                hidden ? [.skipsSubdirectoryDescendants] : [.skipsSubdirectoryDescendants, .skipsHiddenFiles]
+            var empty = Set<String>()
+            for url in folders {
+                // No error handler set: an unreadable folder gives a nil enumerator, not "empty".
+                guard let en = FileManager.default.enumerator(
+                    at: url, includingPropertiesForKeys: nil, options: opts) else { continue }
+                if en.nextObject() == nil { empty.insert(url.path) }
+            }
+            DispatchQueue.main.async {
+                guard token == emptyScanCounter else { return }
+                emptyFolderIDs = empty
             }
         }
     }
@@ -629,6 +674,7 @@ struct ContentView: View {
 
     /// Re-read every expanded folder (after a reload, file-system change or hidden-files toggle).
     private func refreshExpanded() {
+        guard treeActive else { return }   // not shown (search, grouping...): refreshed when the tree comes back
         for id in expandedIDs { loadChildren(id: id) }
     }
 
@@ -743,6 +789,15 @@ struct ContentView: View {
         folderWatcher.watch(path)
     }
 
+    /// Tree mode: watch every expanded folder, so files added there from another window or
+    /// app show up. The open folder has its own watcher (`watchOpenFolder`).
+    private func syncTreeWatchers() {
+        let wanted: Set<String> = treeActive ? expandedIDs : []
+        treeWatchers.sync(to: wanted) { id in
+            NotificationCenter.default.post(name: .refreshDirectory, object: URL(fileURLWithPath: id))
+        }
+    }
+
     private func _reload(then: (() -> Void)?) {
         reloadGeneration &+= 1
         let gen    = reloadGeneration
@@ -757,6 +812,7 @@ struct ContentView: View {
                 guard gen == reloadGeneration else { return }
                 rawFiles = items
                 refreshExpanded()
+                scanEmptyFolders()
                 then?()
             }
         }
@@ -1235,10 +1291,36 @@ extension View {
     func resetsCursorOnEnter() -> some View { background(CursorResetOnEnter()) }
 }
 
+/// Watchers for the expanded folders of the list tree, kept in step with the expanded set.
+final class TreeWatchers {
+    private var watchers: [String: FolderChangeWatcher] = [:]
+
+    func sync(to wanted: Set<String>, onChange: @escaping (String) -> Void) {
+        for id in watchers.keys where !wanted.contains(id) {
+            watchers[id]?.stop()
+            watchers[id] = nil
+        }
+        for id in wanted where watchers[id] == nil {
+            let w = FolderChangeWatcher()
+            w.onChange = { onChange(id) }
+            w.watch(URL(fileURLWithPath: id))
+            watchers[id] = w
+        }
+    }
+}
+
 final class FolderChangeWatcher {
     var onChange: (() -> Void)?
     private var source: DispatchSourceFileSystemObject?
     private var debounce: DispatchWorkItem?
+
+    /// Stop watching and close the file descriptor.
+    func stop() {
+        debounce?.cancel()
+        debounce = nil
+        source?.cancel()
+        source = nil
+    }
 
     func watch(_ url: URL) {
         debounce?.cancel()
